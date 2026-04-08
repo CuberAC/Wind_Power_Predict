@@ -1,0 +1,3 @@
+# Ignore NumPy data artifacts
+*.npy
+*.npz

@@ -4,6 +4,7 @@ import pandas
 import xgboost
 import sklearn
 import joblib
+import optuna
 
 def generate_requirements():
     # 获取各个库的当前版本号
@@ -12,7 +13,8 @@ def generate_requirements():
         f"pandas=={pandas.__version__}",
         f"xgboost=={xgboost.__version__}",
         f"scikit-learn=={sklearn.__version__}",  # 注意：安装包叫 scikit-learn，代码里叫 sklearn
-        f"joblib=={joblib.__version__}"
+        f"joblib=={joblib.__version__}",
+        f"optuna=={optuna.__version__}" 
     ]
     
     # 写入到 requirements.txt 文件中
