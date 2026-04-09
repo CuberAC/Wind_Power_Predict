@@ -1,9 +1,8 @@
-# Ignore NumPy data artifacts
-*.npy
-*.npz
 *.md
 logs/
 Task15_W_Zone1_10/
 saved_models/
 figures/
 
+wind_test_2013-07-14_to_end.npy
+README.md
