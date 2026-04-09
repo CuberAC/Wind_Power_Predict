@@ -50,9 +50,12 @@ def main():
     
     data_path = args.data
     
-    # 智能提取版本号
-    file_basename = os.path.basename(data_path).replace('.npz', '')
-    version_tag = file_basename.split('_')[-1] if '_' in file_basename else 'latest'
+    # 智能提取版本号：提取 features_ 之后的全部内容
+    file_basename = os.path.splitext(os.path.basename(data_path))[0]
+    if file_basename.startswith('features_'):
+        version_tag = file_basename[len('features_'):]
+    else:
+        version_tag = file_basename if file_basename else 'latest'
 
     if not os.path.exists(data_path):
         print(f"❌ 找不到文件 {data_path}，请检查路径是否正确！")
