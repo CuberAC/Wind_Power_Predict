@@ -1,3 +1,7 @@
 # Ignore NumPy data artifacts
 *.npy
 *.npz
+*.md
+saved_models/
+logs/
+figures/

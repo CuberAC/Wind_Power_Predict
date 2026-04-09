@@ -19,3 +19,15 @@ xgb_v3搜索出来的最佳参数：
     subsample: 0.6523662083125326
     colsample_bytree: 0.7510208285575809
     min_child_weight: 5
+
+LSTM模型的训练：
+python LSTM_baseline.py \
+  --epochs 200 \
+  --batch-size 256 \
+  --lr 0.001 \
+  --hidden-dim 128 \
+  --num-layers 3 \
+  --save-every 20
+  
+LSTM模型的评测：
+python evalutate_lstm.py logs/20260409_151738/lstm_epoch_100.pth
