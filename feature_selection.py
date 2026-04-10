@@ -32,16 +32,16 @@ def select_top_features(model_path, data_path, top_n=150):
     print(f"4. 瘦身成功！特征维度从 {num_features} 降至 {X_lite.shape[2]}")
     
     # 保存为 Lite 版本
-    output_path = 'features_v3_lite.npz'
+    output_path = 'data/features_v3_lite.npz'
     np.savez_compressed(output_path, X=X_lite, Y=Y_all)
     
     # 🌟 重要：把这 top_indices 存下来！
     # 因为以后在测试集上预测时，你也必须按同样的顺序切分特征！
-    np.save('top_indices_v3.npy', top_indices)
+    np.save('data/top_indices_v3.npy', top_indices)
     
     print(f"✅ 最终数据已保存至: {output_path}")
-    print(f"✅ 特征索引已保存至: top_indices_v3.npy (推理时必用)")
+    print(f"✅ 特征索引已保存至: data/top_indices_v3.npy (推理时必用)")
 
 if __name__ == "__main__":
-    select_top_features('saved_models/v3/xgb_v3_farm_0.pkl', 'features_v3.npz', top_n=150)
+    select_top_features('saved_models/v3/xgb_v3_farm_0.pkl', 'data/features_v3.npz', top_n=150)
     # 💡 注意：如果你已经跑完了 V3，就把上面路径换成 V3 的。

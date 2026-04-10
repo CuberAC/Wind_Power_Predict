@@ -92,11 +92,11 @@ def main():
     2. 调用 load_and_extract_basic_features 获取基础特征矩阵
     3. 调用 build_sliding_window_dataset 获取 X_all 和 Y_all
     4. 打印 X_all 和 Y_all 的 shape 以便检查维度是否正确
-    5. 使用 np.savez 将 X_all 和 Y_all 压缩保存为 'features_v1.npz' 文件
+    5. 使用 np.savez 将 X_all 和 Y_all 压缩保存为 'data/features_v1.npz' 文件
     6. 打印保存成功的提示信息
     """
-    file_path = "wind_train_val_2012-01-02_to_2013-07-13.npy"
-    output_path = "features_v1.npz"
+    file_path = "data/wind_train_val_2012-01-02_to_2013-07-13.npy"
+    output_path = "data/features_v1.npz"
 
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"未找到输入文件: {file_path}")

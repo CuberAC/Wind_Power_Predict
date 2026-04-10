@@ -96,7 +96,7 @@ def train_and_evaluate_recursive(farm_id, X_train, Y_train, X_val, Y_val, save_p
 
 def main():
     parser = argparse.ArgumentParser(description="批量训练风电场 滚动预测模型")
-    parser.add_argument('--data', type=str, default='features_v2.npz', help='特征数据的路径')
+    parser.add_argument('--data', type=str, default='data/features_v2.npz', help='特征数据的路径')
     args = parser.parse_args()
     
     data_path = args.data

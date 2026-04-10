@@ -2,7 +2,7 @@
 # 脚本名称: feature_engineering_v3.py
 # 任务目标: 终极空间融合特征工程 (V3)
 # 核心创新: 在保留 V2 所有物理与时序特征的基础上，引入全局空间相关性。
-# 数据输出: features_v3.npz
+# 数据输出: data/features_v3.npz
 # ==============================================================================
 
 import numpy as np
@@ -142,10 +142,10 @@ def main():
     2. 调用第一步获取基础特征
     3. 调用第二步获取 X_all 和 Y_all
     4. 打印最终 shape
-    5. 压缩保存为 features_v3.npz
+    5. 压缩保存为 data/features_v3.npz
     """
-    file_path = "wind_train_val_2012-01-02_to_2013-07-13.npy"
-    output_filename = "features_v3.npz"
+    file_path = "data/wind_train_val_2012-01-02_to_2013-07-13.npy"
+    output_filename = "data/features_v3.npz"
 
     if not os.path.exists(file_path):
         print(f"找不到原始数据文件: {file_path}")

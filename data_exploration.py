@@ -10,7 +10,7 @@ plt.rcParams['axes.unicode_minus'] = False
 # ------------------------------------------
 
 def explore_data():
-    file_path = 'wind_train_val_2012-01-02_to_2013-07-13.npy'
+    file_path = 'data/wind_train_val_2012-01-02_to_2013-07-13.npy'
     data = np.load(file_path, allow_pickle=True)
     output_dir = 'figures'
     os.makedirs(output_dir, exist_ok=True)

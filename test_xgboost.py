@@ -87,13 +87,13 @@ def build_test_X_Y(weather_features, power_data, version, window_size=24):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--version', type=str, required=True, help='评测模型版本，如 v2, v3, lite')
-    parser.add_argument('--test-data', type=str, default='wind_test_2013-07-14_to_end.npy')
+    parser.add_argument('--test-data', type=str, default='data/wind_test_2013-07-14_to_end.npy')
     args = parser.parse_args()
 
     # Lite 版本索引处理：评测时使用与训练一致的特征子集
     top_indices = None
     if 'lite' in args.version.lower():
-        index_file = 'top_indices_v3.npy'
+        index_file = 'data/top_indices_v3.npy'
         if os.path.exists(index_file):
             print(f"🎯 检测到 Lite 版本，正在加载特征筛选索引: {index_file}")
             top_indices = np.load(index_file)

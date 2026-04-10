@@ -14,7 +14,7 @@ import time
 X_train, Y_train = None, None
 X_val, Y_val = None, None
 
-def load_data_for_tuning(data_path='features_v2.npz', target_farm_id=0):
+def load_data_for_tuning(data_path='data/features_v2.npz', target_farm_id=0):
     """
     加载数据，并严格划分 8-2 验证集，仅提取目标风电场的数据用于调参。
     """
@@ -102,8 +102,8 @@ def objective(trial):
     return rmse
 
 def main():
-    # 1. 准备数据 (这里默认用 features_v2.npz，用 Farm 0 试水)
-    load_data_for_tuning('features_v2.npz', target_farm_id=0)
+    # 1. 准备数据 (这里默认用 data/features_v2.npz，用 Farm 0 试水)
+    load_data_for_tuning('data/features_v2.npz', target_farm_id=0)
     
     # 2. 创建一场研究 (Study)
     # direction='minimize' 代表我们的目标是让返回的误差(RMSE)越小越好

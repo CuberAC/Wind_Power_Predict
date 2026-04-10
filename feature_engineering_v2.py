@@ -1,6 +1,6 @@
 # ==============================================================================
 # 任务目标: 深度风电特征工程 (V2) - 引入风能立方、风向编码、时间周期及历史统计量
-# 数据输出: features_v2.npz (包含特征矩阵 X 和 标签矩阵 Y)
+# 数据输出: data/features_v2.npz (包含特征矩阵 X 和 标签矩阵 Y)
 # ==============================================================================
 
 import numpy as np
@@ -122,7 +122,7 @@ def build_advanced_sliding_window(weather_features, power_data, window_size=24):
     return X_all, Y_all
 
 def main():
-    file_path = 'wind_train_val_2012-01-02_to_2013-07-13.npy'
+    file_path = 'data/wind_train_val_2012-01-02_to_2013-07-13.npy'
     if not os.path.exists(file_path):
         print(f"❌ 找不到原始数据文件 {file_path}")
         return
@@ -136,7 +136,7 @@ def main():
     print(f"   => 最终标签矩阵 Y 的形状: {Y_all.shape}")
     
     # 采用 np.savez_compressed 能够大幅减小生成的文件体积
-    output_filename = 'features_v2.npz'
+    output_filename = 'data/features_v2.npz'
     np.savez_compressed(output_filename, X=X_all, Y=Y_all)
     
     print(f"[{time.strftime('%H:%M:%S')}] ✅ 恭喜！深度特征文件 {output_filename} 已成功生成。")

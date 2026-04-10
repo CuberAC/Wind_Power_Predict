@@ -128,7 +128,7 @@ def train_xgboost_for_farm(farm_id, X, Y):
     return model
 
 if __name__ == "__main__":
-    file_path = 'wind_train_val_2012-01-02_to_2013-07-13.npy'
+    file_path = 'data/wind_train_val_2012-01-02_to_2013-07-13.npy'
     
     # 1. 预处理数据
     processed_data = load_and_preprocess_data(file_path)

@@ -6,7 +6,7 @@ import numpy as np
 import joblib
 import os
 
-def generate_routing_dictionary(v3_model_dir='saved_models/v3', top_n=150, output_name='v3_1_routing_dict.npy'):
+def generate_routing_dictionary(v3_model_dir='saved_models/v3', top_n=150, output_name='data/v3_1_routing_dict.npy'):
     num_farms = 10
     # 初始化一个 (10, 150) 的二维矩阵，用于存放每个风场的专属索引
     routing_indices = np.zeros((num_farms, top_n), dtype=int)

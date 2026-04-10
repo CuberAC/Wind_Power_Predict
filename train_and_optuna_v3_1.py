@@ -47,8 +47,8 @@ def objective(trial):
 
 def main():
     version_tag = 'v3_1'
-    data_path = 'features_v3.npz'
-    dict_path = 'v3_1_routing_dict.npy'
+    data_path = 'data/features_v3.npz'
+    dict_path = 'data/v3_1_routing_dict.npy'
     
     # 1. 基础检查与数据加载
     if not os.path.exists(data_path) or not os.path.exists(dict_path):
