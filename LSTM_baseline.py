@@ -75,7 +75,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="LSTM baseline 训练脚本")
 
     # 数据相关参数
-    parser.add_argument("--data-path", type=str, default="wind_train_val_2012-01-02_to_2013-07-13.npy")
+    parser.add_argument("--data-path", type=str, default="data/wind_train_val_2012-01-02_to_2013-07-13.npy")
     parser.add_argument("--split-ratio", type=float, default=0.8)
     parser.add_argument("--window-size", type=int, default=24)
 

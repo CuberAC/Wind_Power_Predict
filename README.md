@@ -31,3 +31,11 @@ python LSTM_baseline.py \
   
 LSTM模型的评测：
 python evalutate_lstm.py logs/20260409_151738/lstm_epoch_100.pth
+
+GNN-LSTM模型的训练:
+python GNN_LSTM_baseline.py \
+    --batch-size 64 \
+    --epochs 100 \
+    --lr 0.0005 \
+    --window-size 24 \
+    --save-every 20
