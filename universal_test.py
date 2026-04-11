@@ -24,6 +24,41 @@ class GraphConvLayer(nn.Module):
         return F.relu(aggregated)
 
 
+class GATLayer(nn.Module):
+    def __init__(self, in_features, out_features, dropout=0.2, alpha=0.2):
+        super().__init__()
+        self.dropout = dropout
+        self.alpha = alpha
+
+        self.W = nn.Linear(in_features, out_features, bias=False)
+        self.a = nn.Parameter(torch.empty(size=(2 * out_features, 1)))
+
+        nn.init.xavier_uniform_(self.W.weight)
+        nn.init.xavier_uniform_(self.a)
+
+    def forward(self, x, adj=None):
+        # x: [B, S, N, F_in]
+        B, S, N, _ = x.shape
+        h = self.W(x)  # [B, S, N, F_out]
+
+        h_i = h.unsqueeze(3).repeat(1, 1, 1, N, 1)
+        h_j = h.unsqueeze(2).repeat(1, 1, N, 1, 1)
+        a_input = torch.cat([h_i, h_j], dim=-1)
+
+        e = F.leaky_relu(torch.matmul(a_input, self.a).squeeze(-1), negative_slope=self.alpha)
+
+        if adj is not None:
+            if adj.dim() != 2:
+                raise ValueError('adj must be shape [N, N] when provided to GATLayer')
+            mask = adj > 0
+            e = e.masked_fill(~mask.unsqueeze(0).unsqueeze(0), -9e15)
+
+        attention = F.softmax(e, dim=-1)
+        attention = F.dropout(attention, self.dropout, training=self.training)
+        output = torch.matmul(attention, h)
+        return output
+
+
 class WindGNNLSTM(nn.Module):
     def __init__(
         self,
@@ -84,6 +119,62 @@ class WindGNNLSTM(nn.Module):
         x_gcn = self.gcn2(x_gcn, mixed_adj)
 
         x_fused = torch.cat([x_gcn, x], dim=-1)
+        x_lstm_in = x_fused.permute(0, 2, 1, 3).contiguous().view(b * n, s, -1)
+        _, (h_n, _) = self.lstm(x_lstm_in)
+
+        out = self.fc(h_n[-1])
+        out = out.view(b, n, self.output_dim)
+        return out
+
+
+class WindGATLSTM(nn.Module):
+    def __init__(
+        self,
+        num_nodes=10,
+        in_dim=11,
+        gnn_dim=32,
+        lstm_dim=64,
+        num_layers=2,
+        output_dim=24,
+        dropout=0.1,
+    ):
+        super().__init__()
+        self.num_nodes = num_nodes
+        self.output_dim = output_dim
+
+        self.feature_extractor = nn.Sequential(
+            nn.Linear(in_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, gnn_dim),
+        )
+
+        self.gat1 = GATLayer(gnn_dim, gnn_dim, dropout=dropout)
+        self.gat2 = GATLayer(gnn_dim, gnn_dim, dropout=dropout)
+
+        self.lstm_input_dim = gnn_dim + in_dim
+        self.lstm = nn.LSTM(
+            input_size=self.lstm_input_dim,
+            hidden_size=lstm_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0,
+        )
+
+        self.fc = nn.Sequential(
+            nn.Linear(lstm_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(p=dropout),
+            nn.Linear(128, output_dim),
+        )
+
+    def forward(self, x, adj):
+        b, s, n, f = x.shape
+
+        x_features = self.feature_extractor(x)
+        x_gat = self.gat1(x_features, adj)
+        x_gat = self.gat2(x_gat, adj)
+
+        x_fused = torch.cat([x_gat, x], dim=-1)
         x_lstm_in = x_fused.permute(0, 2, 1, 3).contiguous().view(b * n, s, -1)
         _, (h_n, _) = self.lstm(x_lstm_in)
 
@@ -155,6 +246,17 @@ class UniversalWindPredictor:
 
     def _build_model(self):
         model_type = self.config.get('model_type', 'GNN_LSTM_v1')
+
+        if model_type in ['GAT_LSTM_v3', 'GAT_LSTM'] or bool(self.config.get('use_gat', False)):
+            return WindGATLSTM(
+                num_nodes=int(self.config.get('num_nodes', 10)),
+                in_dim=int(self.config['input_dim']),
+                gnn_dim=int(self.config['gnn_dim']),
+                lstm_dim=int(self.config['lstm_dim']),
+                num_layers=int(self.config['num_layers']),
+                output_dim=int(self.config['output_dim']),
+                dropout=float(self.config.get('dropout', 0.1)),
+            )
 
         if model_type in ['GNN_LSTM_v1', 'GNN_LSTM_v2', 'GNN_LSTM']:
             return WindGNNLSTM(

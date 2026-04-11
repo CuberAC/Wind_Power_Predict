@@ -62,4 +62,13 @@ python GNN_LSTM_v2.py \
     --dropout 0.1
 
 universal_test:
-python universal_test.py --model-dir logs/gnn_lstm_20260411_202614 --model-file gnn_lstm_epoch_80.pth
+python universal_test.py --model-dir logs/gat_lstm_v3_20260411_222733 --model-file gnn_lstm_epoch_80.pth
+
+GNN_LSTM_v3训练：
+python GNN_LSTM_v3.py \
+    --batch-size 64 \
+    --epochs 100 \
+    --lr 0.001 \
+    --window-size 24 \
+    --save-every 20
+    --dropout 0.1
