@@ -30,7 +30,7 @@ python LSTM_baseline.py \
   --save-every 20
   
 LSTM模型的评测：
-python evalutate_lstm.py logs/20260409_151738/lstm_epoch_100.pth
+python test_lstm_baseline.py --model-dir logs/20260411_184200 --model-file lstm_epoch_100.pth
 
 GNN-LSTM模型的训练:
 python GNN_LSTM_baseline.py \
@@ -39,3 +39,27 @@ python GNN_LSTM_baseline.py \
     --lr 0.0005 \
     --window-size 24 \
     --save-every 20
+
+GNN_LSTM_v1训练：
+python GNN_LSTM_v1.py \
+    --batch-size 64 \
+    --epochs 100 \
+    --lr 0.0005 \
+    --window-size 24 \
+    --save-every 20 \
+    --dropout 0.1
+
+测试v1:
+python test_GNN_LSTM.py --model-dir logs/gnn_lstm_20260411_194822 --model-file gnn_lstm_epoch_100.pth
+
+GNN_LSTM_v2训练：
+python GNN_LSTM_v2.py \
+    --batch-size 64 \
+    --epochs 100 \
+    --lr 0.001 \
+    --window-size 24 \
+    --save-every 20
+    --dropout 0.1
+
+universal_test:
+python universal_test.py --model-dir logs/gnn_lstm_20260411_202614 --model-file gnn_lstm_epoch_80.pth

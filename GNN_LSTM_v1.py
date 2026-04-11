@@ -8,6 +8,7 @@ Description: 基于数据驱动图（皮尔逊相关系数）和 GNN-LSTM 串联
 """
 
 import argparse
+import json
 import os
 from datetime import datetime
 
@@ -195,10 +196,18 @@ class WindGNNLSTM(nn.Module):
         self.num_nodes = num_nodes
         self.output_dim = output_dim
 
-        # 建议只用 1 层 GCN 提取局部空间特征，防止过度平滑
-        self.gcn1 = GraphConvLayer(in_dim, gnn_dim)
+        # 前置非线性特征提取器：将原始11维特征映射到高阶表征空间
+        self.feature_extractor = nn.Sequential(
+            nn.Linear(in_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, gnn_dim),
+        )
 
-        # LSTM 输入维度 = 图特征(gnn_dim) + 原始气象时间特征(in_dim) = 32 + 11 = 43
+        # GCN 输入改为高阶特征维度
+        self.gcn1 = GraphConvLayer(gnn_dim, gnn_dim)
+        self.gcn2 = GraphConvLayer(gnn_dim, gnn_dim)
+
+        # LSTM 输入维度 = 图特征(gnn_dim) + 原始特征(in_dim)
         self.lstm_input_dim = gnn_dim + in_dim
         
         self.lstm = nn.LSTM(
@@ -209,33 +218,38 @@ class WindGNNLSTM(nn.Module):
             dropout=dropout if num_layers > 1 else 0.0,
         )
 
-        self.dropout = nn.Dropout(p=dropout)
-        # 【关键】：从预测 24 个值，变成只预测 1 个值（因为我们要对序列的每一步单独预测）
-        self.fc = nn.Linear(lstm_dim, 1)
+        # 全局轨迹解码：用最终隐藏状态一次性生成未来 output_dim 步
+        self.fc = nn.Sequential(
+            nn.Linear(lstm_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(p=dropout),
+            nn.Linear(128, output_dim),
+        )
 
     def forward(self, x, adj):
         # x 形状: (Batch, 48, 10, 11)
         b, s, n, f = x.shape
+
+        # 1. 前置特征提取：低阶特征 -> 高阶特征
+        x_features = self.feature_extractor(x)  # (B, 48, 10, gnn_dim)
         
-        # 1. 图卷积提取空间特征
-        x_gcn = self.gcn1(x, adj)  # (B, 48, 10, 32)
+        # 2. 双层图卷积提取空间特征
+        x_gcn = self.gcn1(x_features, adj)
+        x_gcn = self.gcn2(x_gcn, adj)  # (B, 48, 10, gnn_dim)
         
-        # 2. 残差拼接：保留原汁原味的气象预报数据
+        # 3. 残差拼接：保留原始输入信息
         x_fused = torch.cat([x_gcn, x], dim=-1) # (B, 48, 10, 43)
         
-        # 3. 维度转换，送入 LSTM
+        # 4. 维度转换，送入 LSTM
         x_lstm_in = x_fused.permute(0, 2, 1, 3).contiguous().view(b * n, s, -1)
-        lstm_out, _ = self.lstm(x_lstm_in) # lstm_out: (B*N, 48, 64)
+        _, (h_n, _) = self.lstm(x_lstm_in)
         
-        # 4. 【核心破解】：截取对应未来预报的后 24 步的 LSTM 隐状态
-        future_lstm_out = lstm_out[:, -self.output_dim:, :] # (B*N, 24, 64)
+        # 5. 全局状态解码：取最后一层隐藏状态，一次性回归未来轨迹
+        last_hidden = h_n[-1] # (B*N, lstm_dim)
+        out = self.fc(last_hidden) # (B*N, output_dim)
         
-        # 5. 时刻对齐的预测
-        future_lstm_out = self.dropout(future_lstm_out)
-        out = self.fc(future_lstm_out) # (B*N, 24, 1)
-        
-        # 6. 还原形状为 (Batch, Nodes, Output_Seq)
-        out = out.view(b, n, self.output_dim) 
+        # 还原形状为 (Batch, Nodes, Output_Seq)
+        out = out.view(b, n, self.output_dim)
         return out
 
 
@@ -244,7 +258,7 @@ class WindGNNLSTM(nn.Module):
 # =====================================================================
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='GNN-LSTM baseline 训练脚本')
+    parser = argparse.ArgumentParser(description='GNN-LSTM v2 训练脚本')
 
     # 数据相关参数
     parser.add_argument('--data-path', type=str, default='data/wind_train_val_2012-01-02_to_2013-07-13.npy')
@@ -323,6 +337,27 @@ def main():
         dropout=args.dropout,
     ).to(device)
 
+    # 模型DNA：供通用测试脚本自动恢复预处理与网络结构
+    model_config = {
+        'model_type': 'GNN_LSTM_v1',
+        'num_nodes': args.num_nodes,
+        'input_dim': args.input_dim,
+        'gnn_dim': args.gnn_dim,
+        'lstm_dim': args.lstm_dim,
+        'num_layers': args.num_layers,
+        'output_dim': args.output_dim,
+        'dropout': args.dropout,
+        'power_idx': 6,
+        'weather_idxs': [0, 1, 2, 3, 4, 5],
+        'use_synthetic_wind': True,
+        'use_time_encode': True,
+        'use_adaptive_adj': False,
+        'future_power_fill': 'zero',
+    }
+
+    with open(os.path.join(exp_dir, 'config.json'), 'w', encoding='utf-8') as f:
+        json.dump(model_config, f, ensure_ascii=False, indent=4)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     # 【新增】当 val_mae 连续 5 轮不降，学习率减半，继续逼近最优解
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
@@ -373,6 +408,8 @@ def main():
             if args.save_every > 0 and (epoch + 1) % args.save_every == 0:
                 save_path = os.path.join(exp_dir, f'gnn_lstm_epoch_{epoch + 1}.pth')
                 torch.save(model.state_dict(), save_path)
+                with open(os.path.join(exp_dir, 'config.json'), 'w', encoding='utf-8') as f:
+                    json.dump(model_config, f, ensure_ascii=False, indent=4)
                 print(f'模型已保存: {save_path}')
 
 

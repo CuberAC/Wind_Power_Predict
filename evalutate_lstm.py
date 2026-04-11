@@ -22,7 +22,7 @@ def evaluate_model(model_path):
     
     # 2. 加载 Scaler 和 数据集 (验证集模式)
     scaler = joblib.load(scaler_path)
-    dataset = WindDataset('wind_train_val_2012-01-02_to_2013-07-13.npy', mode='val', scaler=scaler)
+    dataset = WindDataset('data/wind_train_val_2012-01-02_to_2013-07-13.npy', mode='val', scaler=scaler)
     
     # 3. 加载模型
     model = WindLSTM().to(device)
