@@ -1,21 +1,11 @@
-运行XGBoost的训练：
-python train_xgb.py --data features_v1.npz
+训练STGCN:
+python train_stgcn.py \
+  --data-path data/wind_train_val_2012-01-02_to_2013-07-13.npy \
+  --window-size 24 \
+  --batch-size 64 \
+  --epochs 200 \
+  --lr 1e-3 \
+  --hidden-dim 64 \
+  --alpha 3.0 \
+  --patience 20
 
-xgb_v2搜索出来的最佳参数：
-    n_estimators=598,
-    max_depth=7,
-    learning_rate=0.013698166894754917,
-    subsample=0.7186255612121745,
-    colsample_bytree=0.9993604825235307,
-    min_child_weight=2,
-    objective='reg:squarederror',
-    n_jobs=-1,
-    random_state=42
-
-xgb_v3搜索出来的最佳参数：
-    n_estimators: 1230
-    max_depth: 9
-    learning_rate: 0.010659217252788872
-    subsample: 0.6523662083125326
-    colsample_bytree: 0.7510208285575809
-    min_child_weight: 5
