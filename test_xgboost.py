@@ -95,7 +95,7 @@ def build_test_X_Y(weather_features, power_data, version, window_size=24):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--version', type=str, required=True, help='评测模型版本：v1, v2, v3, v3_lite, v3_1')
-    parser.add_argument('--test-data', type=str, default='data/wind_test_2013-07-14_to_end.npy')
+    parser.add_argument('--test-data', type=str, default='data/wind_test_cleaned.npy')
     args = parser.parse_args()
 
     # ================= 🚀 核心新增：解析路由与瘦身索引 =================
