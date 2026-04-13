@@ -4,8 +4,9 @@ python train_stgcn.py \
   --window-size 24 \
   --batch-size 64 \
   --epochs 200 \
-  --lr 1e-3 \
+  --lr 0.005 \
   --hidden-dim 64 \
   --alpha 3.0 \
-  --patience 20
+  --patience 20 \
+  --dropout 0.1
 

@@ -101,26 +101,28 @@ class GraphLearning(nn.Module):
 
     def forward(self):
         scores = torch.mm(self.E1, self.E2.t()) / (self.E1.size(1) ** 0.5)
-        A = F.relu(torch.tanh(scores))
-        A = A + torch.eye(A.size(0), device=A.device, dtype=A.dtype)
-        A = F.softmax(A, dim=-1)
+        scores = scores + torch.eye(scores.size(0), device=scores.device, dtype=scores.dtype)
+        A = F.softmax(scores, dim=-1)
         return A
 
 
 class TemporalInception(nn.Module):
-    def __init__(self, c_in, c_out):
+    def __init__(self, c_in, c_out, dropout=0.1):
         super().__init__()
         self.conv_k2 = nn.Conv2d(c_in, c_out, kernel_size=(1, 2), padding="same")
         self.conv_k3 = nn.Conv2d(c_in, c_out, kernel_size=(1, 3), padding="same")
         self.conv_k5 = nn.Conv2d(c_in, c_out, kernel_size=(1, 5), padding="same")
         self.conv_k7 = nn.Conv2d(c_in, c_out, kernel_size=(1, 7), padding="same")
+        self.dropout = nn.Dropout2d(p=dropout)
 
     def forward(self, x):
         x2 = self.conv_k2(x)
         x3 = self.conv_k3(x)
         x5 = self.conv_k5(x)
         x7 = self.conv_k7(x)
-        return x2 + x3 + x5 + x7
+        out = x2 + x3 + x5 + x7
+        out = self.dropout(out)
+        return out
 
 
 class SpatialGCN(nn.Module):
@@ -138,18 +140,20 @@ class SpatialGCN(nn.Module):
 
 
 class STGCNBlock(nn.Module):
-    def __init__(self, hidden_dim):
+    def __init__(self, hidden_dim, dropout=0.1):
         super().__init__()
-        self.t1 = TemporalInception(hidden_dim, hidden_dim)
+        self.t1 = TemporalInception(hidden_dim, hidden_dim, dropout=dropout)
         self.s = SpatialGCN(hidden_dim, hidden_dim)
-        self.t2 = TemporalInception(hidden_dim, hidden_dim)
+        self.t2 = TemporalInception(hidden_dim, hidden_dim, dropout=dropout)
         self.norm = nn.BatchNorm2d(hidden_dim)
+        self.dropout = nn.Dropout2d(p=dropout)
 
     def forward(self, x, A):
         out = self.t1(x)
         out = self.s(out, A)
         out = self.t2(out)
         out = self.norm(out)
+        out = self.dropout(out)
         return out
 
 
@@ -172,7 +176,9 @@ class WindSTGCN(nn.Module):
         self.input_seq_len = input_seq_len
         self.input_proj = nn.Conv2d(in_dim, hidden_dim, kernel_size=(1, 1))
         self.graph_learning = GraphLearning(num_nodes=num_nodes, embed_dim=embed_dim, alpha=alpha)
-        self.blocks = nn.ModuleList([STGCNBlock(hidden_dim=hidden_dim) for _ in range(num_blocks)])
+        self.blocks = nn.ModuleList(
+            [STGCNBlock(hidden_dim=hidden_dim, dropout=dropout) for _ in range(num_blocks)]
+        )
         self.dropout = nn.Dropout(dropout)
         self.end_conv = nn.Sequential(
             nn.Conv2d(
