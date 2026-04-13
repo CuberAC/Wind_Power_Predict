@@ -96,11 +96,12 @@ class GraphLearning(nn.Module):
     def __init__(self, num_nodes, embed_dim=10, alpha=3.0):
         super().__init__()
         self.alpha = alpha
-        self.E1 = nn.Parameter(torch.randn(num_nodes, embed_dim))
-        self.E2 = nn.Parameter(torch.randn(num_nodes, embed_dim))
+        self.E1 = nn.Parameter(torch.randn(num_nodes, embed_dim) * 0.1)
+        self.E2 = nn.Parameter(torch.randn(num_nodes, embed_dim) * 0.1)
 
     def forward(self):
-        A = F.relu(torch.tanh(self.alpha * torch.mm(self.E1, self.E2.t())))
+        scores = torch.mm(self.E1, self.E2.t()) / (self.E1.size(1) ** 0.5)
+        A = F.relu(torch.tanh(scores))
         A = A + torch.eye(A.size(0), device=A.device, dtype=A.dtype)
         A = F.softmax(A, dim=-1)
         return A
@@ -109,21 +110,17 @@ class GraphLearning(nn.Module):
 class TemporalInception(nn.Module):
     def __init__(self, c_in, c_out):
         super().__init__()
-        base = c_out // 4
-        rem = c_out % 4
-        branch_channels = [base + (1 if i < rem else 0) for i in range(4)]
-
-        self.conv_k2 = nn.Conv2d(c_in, branch_channels[0], kernel_size=(1, 2), padding="same")
-        self.conv_k3 = nn.Conv2d(c_in, branch_channels[1], kernel_size=(1, 3), padding="same")
-        self.conv_k5 = nn.Conv2d(c_in, branch_channels[2], kernel_size=(1, 5), padding="same")
-        self.conv_k7 = nn.Conv2d(c_in, branch_channels[3], kernel_size=(1, 7), padding="same")
+        self.conv_k2 = nn.Conv2d(c_in, c_out, kernel_size=(1, 2), padding="same")
+        self.conv_k3 = nn.Conv2d(c_in, c_out, kernel_size=(1, 3), padding="same")
+        self.conv_k5 = nn.Conv2d(c_in, c_out, kernel_size=(1, 5), padding="same")
+        self.conv_k7 = nn.Conv2d(c_in, c_out, kernel_size=(1, 7), padding="same")
 
     def forward(self, x):
         x2 = self.conv_k2(x)
         x3 = self.conv_k3(x)
         x5 = self.conv_k5(x)
         x7 = self.conv_k7(x)
-        return torch.cat([x2, x3, x5, x7], dim=1)
+        return x2 + x3 + x5 + x7
 
 
 class SpatialGCN(nn.Module):
@@ -167,19 +164,30 @@ class WindSTGCN(nn.Module):
         alpha=3.0,
         dropout=0.1,
         input_seq_len=48,
+        num_blocks=3,
     ):
         super().__init__()
+        if num_blocks < 1:
+            raise ValueError(f"num_blocks 必须 >= 1，当前 {num_blocks}")
         self.input_seq_len = input_seq_len
         self.input_proj = nn.Conv2d(in_dim, hidden_dim, kernel_size=(1, 1))
         self.graph_learning = GraphLearning(num_nodes=num_nodes, embed_dim=embed_dim, alpha=alpha)
-        self.block = STGCNBlock(hidden_dim=hidden_dim)
+        self.blocks = nn.ModuleList([STGCNBlock(hidden_dim=hidden_dim) for _ in range(num_blocks)])
         self.dropout = nn.Dropout(dropout)
-        self.end_conv = nn.Conv2d(
-            in_channels=hidden_dim,
-            out_channels=128,
-            kernel_size=(1, input_seq_len),
+        self.end_conv = nn.Sequential(
+            nn.Conv2d(
+                in_channels=hidden_dim,
+                out_channels=128,
+                kernel_size=(1, input_seq_len),
+            ),
+            nn.ReLU(),
         )
-        self.fc = nn.Linear(128, output_dim)
+        self.fc = nn.Sequential(
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, output_dim),
+        )
 
     def forward(self, x):
         # [B, T, N, F] -> [B, F, N, T]
@@ -187,9 +195,10 @@ class WindSTGCN(nn.Module):
         x = self.input_proj(x)
 
         A = self.graph_learning()
-        res = x
-        x = self.block(x, A)
-        x = x + res
+        for block in self.blocks:
+            res = x
+            x = block(x, A)
+            x = x + res
         x = self.dropout(x)
 
         if x.shape[-1] != self.input_seq_len:
@@ -256,6 +265,7 @@ def parse_args():
     parser.add_argument("--embed-dim", type=int, default=10)
     parser.add_argument("--alpha", type=float, default=3.0)
     parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--num-blocks", type=int, default=3)
     parser.add_argument("--patience", type=int, default=20)
     parser.add_argument("--lr-patience", type=int, default=5)
     parser.add_argument("--lr-factor", type=float, default=0.5)
@@ -343,6 +353,7 @@ def main():
         alpha=args.alpha,
         dropout=args.dropout,
         input_seq_len=2 * args.window_size,
+        num_blocks=args.num_blocks,
     ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -366,6 +377,7 @@ def main():
             "in_dim": 13,
             "power_idx": 8,
             "input_seq_len": int(2 * args.window_size),
+            "num_blocks": int(args.num_blocks),
             "normalize_cols": normalize_cols,
             "feature_order": [
                 "U10",

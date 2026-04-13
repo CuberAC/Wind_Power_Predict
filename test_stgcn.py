@@ -99,21 +99,17 @@ class GraphLearning(nn.Module):
 class TemporalInception(nn.Module):
     def __init__(self, c_in, c_out):
         super().__init__()
-        base = c_out // 4
-        rem = c_out % 4
-        branch_channels = [base + (1 if i < rem else 0) for i in range(4)]
-
-        self.conv_k2 = nn.Conv2d(c_in, branch_channels[0], kernel_size=(1, 2), padding="same")
-        self.conv_k3 = nn.Conv2d(c_in, branch_channels[1], kernel_size=(1, 3), padding="same")
-        self.conv_k5 = nn.Conv2d(c_in, branch_channels[2], kernel_size=(1, 5), padding="same")
-        self.conv_k7 = nn.Conv2d(c_in, branch_channels[3], kernel_size=(1, 7), padding="same")
+        self.conv_k2 = nn.Conv2d(c_in, c_out, kernel_size=(1, 2), padding="same")
+        self.conv_k3 = nn.Conv2d(c_in, c_out, kernel_size=(1, 3), padding="same")
+        self.conv_k5 = nn.Conv2d(c_in, c_out, kernel_size=(1, 5), padding="same")
+        self.conv_k7 = nn.Conv2d(c_in, c_out, kernel_size=(1, 7), padding="same")
 
     def forward(self, x):
         x2 = self.conv_k2(x)
         x3 = self.conv_k3(x)
         x5 = self.conv_k5(x)
         x7 = self.conv_k7(x)
-        return torch.cat([x2, x3, x5, x7], dim=1)
+        return x2 + x3 + x5 + x7
 
 
 class SpatialGCN(nn.Module):
@@ -157,28 +153,40 @@ class WindSTGCN(nn.Module):
         alpha=3.0,
         dropout=0.1,
         input_seq_len=48,
+        num_blocks=3,
     ):
         super().__init__()
+        if num_blocks < 1:
+            raise ValueError(f"num_blocks 必须 >= 1，当前 {num_blocks}")
         self.input_seq_len = input_seq_len
         self.input_proj = nn.Conv2d(in_dim, hidden_dim, kernel_size=(1, 1))
         self.graph_learning = GraphLearning(num_nodes=num_nodes, embed_dim=embed_dim, alpha=alpha)
-        self.block = STGCNBlock(hidden_dim=hidden_dim)
+        self.blocks = nn.ModuleList([STGCNBlock(hidden_dim=hidden_dim) for _ in range(num_blocks)])
         self.dropout = nn.Dropout(dropout)
-        self.end_conv = nn.Conv2d(
-            in_channels=hidden_dim,
-            out_channels=128,
-            kernel_size=(1, input_seq_len),
+        self.end_conv = nn.Sequential(
+            nn.Conv2d(
+                in_channels=hidden_dim,
+                out_channels=128,
+                kernel_size=(1, input_seq_len),
+            ),
+            nn.ReLU(),
         )
-        self.fc = nn.Linear(128, output_dim)
+        self.fc = nn.Sequential(
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, output_dim),
+        )
 
     def forward(self, x):
         x = x.permute(0, 3, 2, 1)
         x = self.input_proj(x)
 
         A = self.graph_learning()
-        res = x
-        x = self.block(x, A)
-        x = x + res
+        for block in self.blocks:
+            res = x
+            x = block(x, A)
+            x = x + res
         x = self.dropout(x)
 
         if x.shape[-1] != self.input_seq_len:
@@ -315,6 +323,7 @@ def main():
         alpha=float(config.get("alpha", 3.0)),
         dropout=float(config.get("dropout", 0.1)),
         input_seq_len=int(config.get("input_seq_len", 2 * int(config.get("window_size", 24)))),
+        num_blocks=int(config.get("num_blocks", 3)),
     ).to(device)
 
     state = torch.load(ckpt_path, map_location=device)
