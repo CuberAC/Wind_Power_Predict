@@ -49,9 +49,10 @@ def process_ridge_features(raw_data, horizon=24):
         idx 4: V100
         idx 5: Power
 
-    输出:
-      X: [samples, num_features]
-      Y: [samples, horizon]
+        输出:
+            X: [samples, num_features]
+            Y: [samples, horizon]
+            farm_ids: [samples]，每个样本对应的风场编号
     """
     if raw_data.ndim != 3:
         raise ValueError(f"raw_data 应为 3 维 [T, N, F]，实际为 {raw_data.shape}")
@@ -76,6 +77,7 @@ def process_ridge_features(raw_data, horizon=24):
 
     x_rows = []
     y_rows = []
+    farm_ids = []
 
     # t 代表预测起点，预测 y[t+1 : t+horizon+1]
     for t in range(2, t_steps - horizon):
@@ -146,15 +148,17 @@ def process_ridge_features(raw_data, horizon=24):
 
             x_rows.append(feat)
             y_rows.append(target)
+            farm_ids.append(n)
 
     x = np.stack(x_rows, axis=0).astype(np.float32)
     y = np.stack(y_rows, axis=0).astype(np.float32)
-    return x, y
+    farm_ids = np.asarray(farm_ids, dtype=np.int32)
+    return x, y, farm_ids
 
 
 def train_ridge(data_path, save_root):
     raw_data = np.load(data_path, allow_pickle=True)
-    x, y = process_ridge_features(raw_data, horizon=24)
+    x, y, farm_ids = process_ridge_features(raw_data, horizon=24)
 
     split_idx = int(len(x) * 0.8)
     if split_idx <= 5:
@@ -164,6 +168,7 @@ def train_ridge(data_path, save_root):
 
     x_train, x_test = x[:split_idx], x[split_idx:]
     y_train, y_test = y[:split_idx], y[split_idx:]
+    farm_test = farm_ids[split_idx:]
 
     scaler = StandardScaler()
     x_train_scaled = scaler.fit_transform(x_train)
@@ -187,10 +192,21 @@ def train_ridge(data_path, save_root):
     print(f"Best alpha: {grid.best_params_['alpha']}")
 
     pred_test = best_model.predict(x_test_scaled)
-    test_mae = mean_absolute_error(y_test, pred_test)
-    test_rmse = float(np.sqrt(mean_squared_error(y_test, pred_test)))
-    print(f"Test MAE: {test_mae:.6f}")
-    print(f"Test RMSE: {test_rmse:.6f}")
+    val_mae = mean_absolute_error(y_test, pred_test)
+    val_rmse = float(np.sqrt(mean_squared_error(y_test, pred_test)))
+    print(f"Validation MAE: {val_mae:.6f}")
+    print(f"Validation RMSE: {val_rmse:.6f}")
+
+    # 按风场统计验证集指标
+    num_farms = int(raw_data.shape[1])
+    per_farm_metrics = []
+    for farm in range(num_farms):
+        mask = farm_test == farm
+        if not np.any(mask):
+            continue
+        farm_mae = mean_absolute_error(y_test[mask], pred_test[mask])
+        farm_rmse = float(np.sqrt(mean_squared_error(y_test[mask], pred_test[mask])))
+        per_farm_metrics.append((farm, farm_mae, farm_rmse))
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     save_dir = os.path.join(save_root, timestamp)
@@ -198,11 +214,29 @@ def train_ridge(data_path, save_root):
 
     scaler_path = os.path.join(save_dir, "scaler.pkl")
     model_path = os.path.join(save_dir, "best_ridge_model.pkl")
+    metrics_path = os.path.join(save_dir, "validation_metrics.txt")
     joblib.dump(scaler, scaler_path)
     joblib.dump(best_model, model_path)
 
+    mean_farm_mae = float(np.mean([m[1] for m in per_farm_metrics])) if per_farm_metrics else float("nan")
+    mean_farm_rmse = float(np.mean([m[2] for m in per_farm_metrics])) if per_farm_metrics else float("nan")
+
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        f.write("Ridge Validation Metrics\n")
+        f.write("=" * 40 + "\n")
+        f.write(f"Best alpha: {grid.best_params_['alpha']}\n")
+        f.write(f"Global Validation MAE: {val_mae:.6f}\n")
+        f.write(f"Global Validation RMSE: {val_rmse:.6f}\n")
+        f.write("\nPer-farm Validation Metrics:\n")
+        for farm, farm_mae, farm_rmse in per_farm_metrics:
+            f.write(f"Farm {farm}: MAE={farm_mae:.6f}, RMSE={farm_rmse:.6f}\n")
+        f.write("\n")
+        f.write(f"Mean MAE Across Farms: {mean_farm_mae:.6f}\n")
+        f.write(f"Mean RMSE Across Farms: {mean_farm_rmse:.6f}\n")
+
     print(f"Saved scaler to: {scaler_path}")
     print(f"Saved model to: {model_path}")
+    print(f"Saved validation metrics to: {metrics_path}")
 
 
 def parse_args():
