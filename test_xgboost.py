@@ -80,8 +80,8 @@ def build_test_X_Y(weather_features, power_data, version, window_size=24):
                                     np.max(past_power_local), np.min(past_power_local)])
                 x_row = np.concatenate([past_power_global, p_stats, p_weather, f_weather])
                 
-            # V2: 24(本场出力) + 4(统计) + 312 + 312 = 652 维
-            elif version == 'v2':
+            # V2 / V2_Best: 24(本场出力) + 4(统计) + 312 + 312 = 652 维
+            elif version in ('v2', 'v2_best'):
                 p_stats = np.array([np.mean(past_power_local), np.std(past_power_local), 
                                     np.max(past_power_local), np.min(past_power_local)])
                 x_row = np.concatenate([past_power_local, p_stats, p_weather, f_weather])
@@ -94,7 +94,7 @@ def build_test_X_Y(weather_features, power_data, version, window_size=24):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--version', type=str, required=True, help='评测模型版本：v1, v2, v3, v3_lite, v3_1')
+    parser.add_argument('--version', type=str, required=True, help='评测模型版本：v1, v2, v2_best, v3, v3_lite, v3_1')
     parser.add_argument('--test-data', type=str, default='data/wind_test_cleaned.npy')
     args = parser.parse_args()
 

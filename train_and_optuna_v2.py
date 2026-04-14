@@ -66,8 +66,10 @@ def feature_engineering_v2(numeric_data, window_size=24):
 def prepare_super_datasets():
     print("📦 正在加载并重构 [超级训练底座] 与 [测试引导靶标]...")
     
-    # 1. 训练底座: 原 train_val 数据 (全量吃满)
+    # 1. 训练底座: 原 train_val 数据的前 80%
     train_raw = np.load('data/wind_train_val_2012-01-02_to_2013-07-13.npy', allow_pickle=True)
+    train_cutoff = int(len(train_raw) * 0.8)
+    train_raw = train_raw[:train_cutoff]
     numeric_train = train_raw[:, :, 1:].astype(np.float32)
     numeric_train = np.nan_to_num(numeric_train, nan=0.0) # 基础保险
     X_train_farms, Y_train_farms = feature_engineering_v2(numeric_train)
@@ -124,7 +126,7 @@ def main():
     global current_X_train, current_Y_train, current_X_test, current_Y_test
     
     print(f"\n🚀 开始 [V2 终极测试集逼近] 全场全自动寻优流水线！")
-    print(f"   (使用全部历史作训练，直接用测试集作为 Optuna 的引导标靶)")
+    print(f"   (使用 train_val 文件前 80% 作训练，直接用测试集作为 Optuna 的引导标靶)")
     
     with open(report_path, 'w', encoding='utf-8') as f_report:
         f_report.write("=== V2_Best 全局 10 风场 Optuna 终极超参数报告 ===\n\n")
