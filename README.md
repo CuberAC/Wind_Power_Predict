@@ -72,3 +72,6 @@ python GNN_LSTM_v3.py \
     --window-size 24 \
     --save-every 20
     --dropout 0.1
+
+
+python GNN_LSTM_OOF.py --epochs 50 --batch-size 64 --n-splits 3 --pool-ratio 0.8 --stacking-dir stacking_data
