@@ -94,55 +94,52 @@ def compute_adjacency_matrix(train_data, power_idx, threshold=0.5):
 # =====================================================================
 
 class WindGlobalDataset(Dataset):
-    """Global dataset that keeps Node dimension and outputs all 10 farms together."""
-
-    def __init__(self, data_segment, mode='train', window_size=24, scaler=None):
+    """
+    【对齐 XGBoost 专属版】：通过传入指定的 indices 进行切分，确保样本数量和 XGB 绝对一致。
+    """
+    def __init__(self, processed_data, indices, scaler=None, is_train=False, window_size=24):
         self.window_size = window_size
         self.power_idx = 6
         self.weather_idxs = [0, 1, 2, 3, 4, 5]
-        self.time_idxs = [7, 8, 9, 10]
-        self.future_cov_idxs = self.weather_idxs + self.time_idxs
+        
+        self.indices = indices
+        self.full_data = processed_data.copy()
 
-        self.segment = data_segment
-        self.scaler = scaler
-
-        if mode == 'train':
+        # 防数据泄露：如果是训练集，只拿训练时间段内的天气数据做归一化
+        if is_train:
             self.scaler = StandardScaler()
-            weather_flat = self.segment[:, :, self.weather_idxs].reshape(-1, len(self.weather_idxs))
-            self.scaler.fit(weather_flat)
-        elif mode in ('val', 'test'):
-            if self.scaler is None:
-                raise ValueError(f'{mode} mode requires a fitted scaler from training set.')
+            # 找到训练集的最大时间步，提取历史天气
+            max_t = max(self.indices) + window_size * 2
+            train_weather = self.full_data[:max_t, :, self.weather_idxs].reshape(-1, len(self.weather_idxs))
+            self.scaler.fit(train_weather)
         else:
-            raise ValueError(f'Unsupported mode: {mode}')
+            if scaler is None:
+                raise ValueError("Validation/Test needs a fitted scaler!")
+            self.scaler = scaler
 
-        self.data = self.segment.copy()
-        segment_weather = self.segment[:, :, self.weather_idxs].reshape(-1, len(self.weather_idxs))
-        self.data[:, :, self.weather_idxs] = self.scaler.transform(segment_weather).reshape(
-            self.segment.shape[0],
-            self.segment.shape[1],
-            len(self.weather_idxs),
-        )
-
-        self.indices = list(range(self.window_size, len(self.data) - self.window_size))
+        # 对全局天气进行归一化（因为后面取切片时直接取）
+        weather_shape = self.full_data[:, :, self.weather_idxs].shape
+        self.full_data[:, :, self.weather_idxs] = self.scaler.transform(
+            self.full_data[:, :, self.weather_idxs].reshape(-1, len(self.weather_idxs))
+        ).reshape(weather_shape)
 
     def __len__(self):
         return len(self.indices)
 
     def __getitem__(self, idx):
-        t = self.indices[idx]
+        # 核心：将 index 还原为真实的时间步 t (和 XGBoost 完全一致的对齐公式)
+        t = self.indices[idx] + self.window_size
 
-        past_seq = self.data[t - self.window_size:t, :, :]
-
-        future_seq = self.data[t:t + self.window_size, :, :].copy()
-        future_seq[:, :, self.power_idx] = 0.0
-
+        past_seq = self.full_data[t - self.window_size : t, :, :]
+        future_seq = self.full_data[t : t + self.window_size, :, :].copy()
+        
+        # 抹零未来真实的功率 (防止泄露)
+        future_seq[:, :, self.power_idx] = 0.0 
+        
         x = np.concatenate([past_seq, future_seq], axis=0).astype(np.float32)
-        y = self.data[t:t + self.window_size, :, self.power_idx].astype(np.float32)
+        y = self.full_data[t : t + self.window_size, :, self.power_idx].astype(np.float32)
 
         return torch.tensor(x), torch.tensor(y)
-
-
 # =====================================================================
 # Module 3: Model Architecture
 # =====================================================================
@@ -294,6 +291,29 @@ def run_train_eval_epochs(model, train_loader, val_loader, adj, args):
         print(f'Epoch {epoch + 1}, Loss: {train_loss:.4f}, Val MAE: {val_mae:.4f}')
 
 
+def run_full_train_only(model, full_train_loader, adj, args):
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    criterion = nn.L1Loss()
+
+    for epoch in range(args.epochs):
+        model.train()
+        train_loss_sum = 0.0
+        for bx, by in full_train_loader:
+            bx = bx.to(adj.device)
+            by = by.to(adj.device)
+            target = by.permute(0, 2, 1).contiguous()
+
+            optimizer.zero_grad()
+            pred = model(bx, adj)
+            loss = criterion(pred, target)
+            loss.backward()
+            optimizer.step()
+            train_loss_sum += loss.item()
+
+        train_loss = train_loss_sum / max(len(full_train_loader), 1)
+        print(f'[FULL] Epoch {epoch + 1}, Loss: {train_loss:.4f}')
+
+
 def infer_loader_preds_2d(model, loader, adj):
     model.eval()
     preds = []
@@ -340,15 +360,22 @@ def main():
     raw_data = np.load(args.data_path, allow_pickle=True)
     processed_data = process_time_features(raw_data)
 
-    # Split timeline into pool (for OOF) and holdout test.
-    split_idx = int(len(processed_data) * args.pool_ratio)
-    pool_data = processed_data[:split_idx]
-    test_data = processed_data[split_idx:]
+    # === 1. Build full sliding-window index space ===
+    # Keep exact alignment with XGBoost style formula.
+    num_samples = len(processed_data) - args.window_size * 2 + 1
+    split_idx = int(num_samples * 0.8)
 
-    if len(pool_data) <= 2 * args.window_size:
-        raise ValueError('pool_data is too short for windowed training.')
-    if len(test_data) <= 2 * args.window_size:
-        raise ValueError('test_data is too short for windowed inference.')
+    # First 80% as OOF candidate pool, last 20% as final test set.
+    pool_indices = np.arange(split_idx)
+    test_indices = np.arange(split_idx, num_samples)
+
+    # Use the actual training span to compute adjacency.
+    train_max_t = split_idx + args.window_size * 2
+    adj = compute_adjacency_matrix(
+        train_data=processed_data[:train_max_t],
+        power_idx=6,
+        threshold=args.corr_threshold,
+    ).to(device)
 
     # =========================
     # Layer 1: 3-fold OOF
@@ -356,40 +383,83 @@ def main():
     tscv = TimeSeriesSplit(n_splits=args.n_splits)
     oof_preds_list = []
 
-    for fold_id, (train_idx, val_idx) in enumerate(tscv.split(np.arange(len(pool_data))), start=1):
-        fold_train_data = pool_data[train_idx]
-        fold_val_data = pool_data[val_idx]
+    for fold_id, (train_idx_idx, val_idx_idx) in enumerate(tscv.split(pool_indices), start=1):
+        print(f"\n========== 开始 Fold {fold_id} ==========")
 
-        print(f'\n===== Fold {fold_id}/{args.n_splits} =====')
-        print(f'Fold train length: {len(fold_train_data)}, val length: {len(fold_val_data)}')
-
-        if len(fold_train_data) <= 2 * args.window_size or len(fold_val_data) <= 2 * args.window_size:
-            print('Skip fold due to insufficient samples after windowing.')
-            continue
-
-        adj = compute_adjacency_matrix(
-            train_data=fold_train_data,
-            power_idx=6,
-            threshold=args.corr_threshold,
-        ).to(device)
+        fold_train_indices = pool_indices[train_idx_idx]
+        fold_val_indices = pool_indices[val_idx_idx]
 
         train_dataset = WindGlobalDataset(
-            data_segment=fold_train_data,
-            mode='train',
+            processed_data,
+            fold_train_indices,
+            is_train=True,
             window_size=args.window_size,
         )
         val_dataset = WindGlobalDataset(
-            data_segment=fold_val_data,
-            mode='val',
-            window_size=args.window_size,
+            processed_data,
+            fold_val_indices,
             scaler=train_dataset.scaler,
+            is_train=False,
+            window_size=args.window_size,
         )
 
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
-        model = build_model(args, device)
-        run_train_eval_epochs(model, train_loader, val_loader, adj, args)
+        # 【重点】每一折必须重新初始化模型和优化器！
+        model = WindGNNLSTM(
+            num_nodes=args.num_nodes,
+            in_dim=args.input_dim,
+            gnn_dim=args.gnn_dim,
+            lstm_dim=args.lstm_dim,
+            num_layers=args.num_layers,
+            output_dim=args.output_dim,
+            dropout=args.dropout,
+        ).to(device)
+
+        optimizer = torch.optim.Adam(model.parameters(), lr=3e-4, weight_decay=1e-4)
+        criterion = nn.L1Loss()
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.5,
+            patience=5,
+            verbose=True,
+        )
+
+        for epoch in range(args.epochs):
+            model.train()
+            train_loss_sum = 0.0
+
+            for bx, by in train_loader:
+                bx = bx.to(device)
+                by = by.to(device)
+                target = by.permute(0, 2, 1).contiguous()
+
+                optimizer.zero_grad()
+                pred = model(bx, adj)
+                loss = criterion(pred, target)
+                loss.backward()
+                optimizer.step()
+
+                train_loss_sum += loss.item()
+
+            model.eval()
+            val_mae_sum = 0.0
+            with torch.no_grad():
+                for bx, by in val_loader:
+                    bx = bx.to(device)
+                    by = by.to(device)
+                    target = by.permute(0, 2, 1).contiguous()
+
+                    pred = model(bx, adj)
+                    val_mae = torch.mean(torch.abs(pred - target))
+                    val_mae_sum += val_mae.item()
+
+            train_loss = train_loss_sum / max(len(train_loader), 1)
+            val_mae = val_mae_sum / max(len(val_loader), 1)
+            scheduler.step(val_mae)
+            print(f'Epoch {epoch + 1}, Loss: {train_loss:.4f}, Val MAE: {val_mae:.4f}')
 
         val_preds_2d = infer_loader_preds_2d(model, val_loader, adj)
         oof_preds_list.append(val_preds_2d)
@@ -399,49 +469,91 @@ def main():
         raise RuntimeError('No valid OOF predictions were generated. Check data length and window size.')
 
     oof_preds_2d = np.concatenate(oof_preds_list, axis=0)
+    os.makedirs(args.stacking_dir, exist_ok=True)
+    oof_save_path = os.path.join(args.stacking_dir, 'GNN_OOF_Pred.npy')
+    np.save(oof_save_path, oof_preds_2d)
+    print(f"✅ GNN OOF 保存成功，形状: {oof_preds_2d.shape}")
 
     # =========================
     # Full training + test inference
     # =========================
-    full_adj = compute_adjacency_matrix(
-        train_data=pool_data,
-        power_idx=6,
-        threshold=args.corr_threshold,
-    ).to(device)
-
     full_train_dataset = WindGlobalDataset(
-        data_segment=pool_data,
-        mode='train',
+        processed_data,
+        pool_indices,
+        is_train=True,
         window_size=args.window_size,
     )
     test_dataset = WindGlobalDataset(
-        data_segment=test_data,
-        mode='test',
-        window_size=args.window_size,
+        processed_data,
+        test_indices,
         scaler=full_train_dataset.scaler,
+        is_train=False,
+        window_size=args.window_size,
     )
 
     full_train_loader = DataLoader(full_train_dataset, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
-    full_model = build_model(args, device)
-    run_full_train_only(full_model, full_train_loader, full_adj, args)
+    print("\n========== 开始全量模型训练 ==========")
+    full_model = WindGNNLSTM(
+        num_nodes=args.num_nodes,
+        in_dim=args.input_dim,
+        gnn_dim=args.gnn_dim,
+        lstm_dim=args.lstm_dim,
+        num_layers=args.num_layers,
+        output_dim=args.output_dim,
+        dropout=args.dropout,
+    ).to(device)
 
-    test_preds_2d = infer_loader_preds_2d(full_model, test_loader, full_adj)
+    optimizer = torch.optim.Adam(full_model.parameters(), lr=3e-4, weight_decay=1e-4)
+    criterion = nn.L1Loss()
+
+    for epoch in range(args.epochs):
+        full_model.train()
+        train_loss_sum = 0.0
+        for bx, by in full_train_loader:
+            bx = bx.to(device)
+            by = by.to(device)
+            target = by.permute(0, 2, 1).contiguous()
+
+            optimizer.zero_grad()
+            pred = full_model(bx, adj)
+            loss = criterion(pred, target)
+            loss.backward()
+            optimizer.step()
+            train_loss_sum += loss.item()
+
+        train_loss = train_loss_sum / max(len(full_train_loader), 1)
+        print(f'[FULL] Epoch {epoch + 1}, Loss: {train_loss:.4f}')
+
+    full_model.eval()
+    test_preds = []
+    with torch.no_grad():
+        for bx, by in test_loader:
+            bx = bx.to(device)
+            pred = full_model(bx, adj)
+            test_preds.append(pred.cpu().numpy())
+
+    test_preds_3d = np.concatenate(test_preds, axis=0)
+    test_preds_2d = test_preds_3d.reshape(-1, args.window_size)
+
+    # Save trained full model for Layer-1 ensemble reuse.
+    final_model_dir = 'saved_models/final_ensemble'
+    os.makedirs(final_model_dir, exist_ok=True)
+    final_model_path = os.path.join(final_model_dir, 'layer1_gnn_full.pth')
+    torch.save(full_model.state_dict(), final_model_path)
 
     # =========================
     # Save stacking features
     # =========================
-    os.makedirs(args.stacking_dir, exist_ok=True)
-    oof_save_path = os.path.join(args.stacking_dir, 'GNN_OOF_Pred.npy')
     test_save_path = os.path.join(args.stacking_dir, 'GNN_Test_Pred.npy')
 
-    np.save(oof_save_path, oof_preds_2d)
     np.save(test_save_path, test_preds_2d)
 
     print('\nDone.')
     print(f'OOF predictions saved to: {oof_save_path}, shape={oof_preds_2d.shape}')
     print(f'Test predictions saved to: {test_save_path}, shape={test_preds_2d.shape}')
+    print(f'Full model saved to: {final_model_path}')
 
 
 if __name__ == '__main__':
