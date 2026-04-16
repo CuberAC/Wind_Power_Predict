@@ -7,18 +7,78 @@
 import numpy as np
 import xgboost as xgb
 from sklearn.multioutput import MultiOutputRegressor
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_absolute_error
 import optuna
 import os
 import time
 import joblib
+import pandas as pd
 
 # 全局变量，用于在每次 Optuna Trial 中传递当前风场的数据
 current_X_train, current_Y_train = None, None
 current_X_val, current_Y_val = None, None
 
+
+def build_v3_test_X_Y(test_raw, window_size=24):
+    """Build V3-style test features/labels from raw test npy."""
+    numeric_test = test_raw[:, :, 1:].astype(np.float32)
+
+    # NaN cleaning (same spirit as test_xgboost.py)
+    if np.isnan(numeric_test).any():
+        for f in range(numeric_test.shape[1]):
+            for c in range(numeric_test.shape[2]):
+                series = pd.Series(numeric_test[:, f, c])
+                numeric_test[:, f, c] = series.interpolate().ffill().bfill().values
+
+    U10, V10 = numeric_test[:, :, 0], numeric_test[:, :, 1]
+    U100, V100 = numeric_test[:, :, 2], numeric_test[:, :, 3]
+    power_data = numeric_test[:, :, 4]
+
+    WS10 = np.sqrt(U10 ** 2 + V10 ** 2)
+    WS100 = np.sqrt(U100 ** 2 + V100 ** 2)
+    WS100_Cube = WS100 ** 3
+    WDir_Rad = np.arctan2(V100, U100)
+    Sin_WDir, Cos_WDir = np.sin(WDir_Rad), np.cos(WDir_Rad)
+
+    time_steps, num_farms = numeric_test.shape[0], numeric_test.shape[1]
+    hours = np.array([h % 24 for h in range(time_steps)], dtype=np.float32)
+    Sin_Hour = np.repeat(np.sin(2 * np.pi * hours / 24)[:, np.newaxis], num_farms, axis=1)
+    Cos_Hour = np.repeat(np.cos(2 * np.pi * hours / 24)[:, np.newaxis], num_farms, axis=1)
+    Sin_Month = np.zeros_like(Sin_Hour)
+    Cos_Month = np.zeros_like(Cos_Hour)
+
+    weather_features = np.stack([
+        U10, V10, U100, V100, WS10, WS100, WS100_Cube,
+        Sin_WDir, Cos_WDir, Sin_Hour, Cos_Hour, Sin_Month, Cos_Month
+    ], axis=-1)
+
+    X_list = [[] for _ in range(num_farms)]
+    Y_list = [[] for _ in range(num_farms)]
+
+    for i in range(window_size, time_steps - window_size + 1):
+        past_power_global = power_data[i - window_size:i, :].flatten()
+        for f in range(num_farms):
+            past_power_local = power_data[i - window_size:i, f]
+            p_weather = weather_features[i - window_size:i, f, :].flatten()
+            f_weather = weather_features[i:i + window_size, f, :].flatten()
+            p_stats = np.array([
+                np.mean(past_power_local),
+                np.std(past_power_local),
+                np.max(past_power_local),
+                np.min(past_power_local),
+            ], dtype=np.float32)
+
+            x_row = np.concatenate([past_power_global, p_stats, p_weather, f_weather])
+            y_row = power_data[i:i + window_size, f]
+            X_list[f].append(x_row)
+            Y_list[f].append(y_row)
+
+    X_farms = [np.asarray(x, dtype=np.float32) for x in X_list]
+    Y_farms = [np.asarray(y, dtype=np.float32) for y in Y_list]
+    return X_farms, Y_farms
+
 def objective(trial):
-    """ Optuna 的核心目标函数 (单次参数尝试) """
+    """ Optuna 的核心目标函数 (单次参数尝试): optimize validation MAE """
     param = {
         'n_estimators': trial.suggest_int('n_estimators', 500, 1500),
         'max_depth': trial.suggest_int('max_depth', 5, 10),
@@ -41,28 +101,29 @@ def objective(trial):
     model.fit(current_X_train, current_Y_train)
     
     Y_pred = model.predict(current_X_val)
-    rmse = np.sqrt(mean_squared_error(current_Y_val, Y_pred))
+    mae = mean_absolute_error(current_Y_val, Y_pred)
     
-    return rmse
+    return mae
 
 def main():
     version_tag = 'v3_1'
-    data_path = 'data/features_v3.npz'
+    train_feature_path = 'data/features_v3.npz'
+    test_raw_path = 'data/wind_test_cleaned.npy'
     dict_path = 'data/v3_1_routing_dict.npy'
     
     # 1. 基础检查与数据加载
-    if not os.path.exists(data_path) or not os.path.exists(dict_path):
-        print(f"❌ 找不到特征数据 {data_path} 或路由字典 {dict_path}！")
+    if not os.path.exists(train_feature_path) or not os.path.exists(dict_path) or not os.path.exists(test_raw_path):
+        print(f"❌ 缺少文件：{train_feature_path} / {dict_path} / {test_raw_path}")
         return
         
-    print(f"📦 正在加载全局 868 维特征数据与 {version_tag} 路由字典...")
-    data = np.load(data_path)
+    print(f"📦 正在加载训练特征、真实测试集与 {version_tag} 路由字典...")
+    data = np.load(train_feature_path)
     X_all, Y_all = data['X'], data['Y']
     routing_dict = np.load(dict_path)
+    test_raw = np.load(test_raw_path, allow_pickle=True)
+    X_test_farms, Y_test_farms = build_v3_test_X_Y(test_raw, window_size=24)
     
-    num_samples = X_all.shape[0]
     num_farms = 10
-    split_idx = int(num_samples * 0.8)
     
     # 创建专属的保存目录
     save_dir = os.path.join('saved_models', version_tag)
@@ -74,7 +135,8 @@ def main():
     global current_X_train, current_Y_train, current_X_val, current_Y_val
     
     print(f"\n🚀 开始 [V3_1 个性化路由] 全场全自动寻优流水线！")
-    print(f"   (由于模型已瘦身至 150 维，配合 5090，速度将极大幅度提升)")
+    print(f"   训练集: data/wind_train_val_2012-01-02_to_2013-07-13.npy (全量特征样本)")
+    print(f"   验证集: data/wind_test_cleaned.npy (真实测试集)")
     
     # 2. 遍历 10 个风场，逐个进行 Optuna 寻优
     with open(report_path, 'w', encoding='utf-8') as f_report:
@@ -90,12 +152,14 @@ def main():
             # 先切出当前风场的全量维度，再精确抽取那 150 维精英特征
             X_farm_lite = X_all[:, f, :][:, my_exclusive_indices]
             Y_farm = Y_all[:, f, :]
+            X_farm_test_lite = X_test_farms[f][:, my_exclusive_indices]
+            Y_farm_test = Y_test_farms[f]
             
-            # 时序划分并内存连续化 (防爆显存)
-            current_X_train = np.ascontiguousarray(X_farm_lite[:split_idx])
-            current_Y_train = np.ascontiguousarray(Y_farm[:split_idx])
-            current_X_val   = np.ascontiguousarray(X_farm_lite[split_idx:])
-            current_Y_val   = np.ascontiguousarray(Y_farm[split_idx:])
+            # 训练用全量 train_val，验证用真实测试集
+            current_X_train = np.ascontiguousarray(X_farm_lite)
+            current_Y_train = np.ascontiguousarray(Y_farm)
+            current_X_val   = np.ascontiguousarray(X_farm_test_lite)
+            current_Y_val   = np.ascontiguousarray(Y_farm_test)
             
             # 异常值清洗
             current_X_train = np.nan_to_num(current_X_train, nan=0.0).astype(np.float32)
@@ -112,7 +176,7 @@ def main():
             study.optimize(objective, n_trials=30, show_progress_bar=True)
             
             print(f"   ✅ Farm {f} 寻优完成！耗时: {(time.time() - start_time)/60:.1f} 分钟")
-            print(f"   🏆 获得最低 RMSE: {study.best_value:.4f}")
+            print(f"   🏆 获得最低 MAE: {study.best_value:.4f}")
             
             # --- 训练并保存该风场的【终极最优模型】 ---
             print(f"   💾 正在使用最佳参数重新训练终极模型并归档...")
@@ -128,7 +192,7 @@ def main():
             
             # --- 写入参数报告 ---
             f_report.write(f"--- Farm {f} ---\n")
-            f_report.write(f"Best RMSE: {study.best_value:.4f}\n")
+            f_report.write(f"Best MAE (Real Test): {study.best_value:.4f}\n")
             for key, val in study.best_params.items():
                 f_report.write(f"{key}: {val}\n")
             f_report.write("\n")
