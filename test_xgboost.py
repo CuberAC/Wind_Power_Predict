@@ -172,6 +172,7 @@ def main():
         print(f"   ⚙️ Farm {f} - 当前推断矩阵特征维度: {X_test.shape[1]} 维")
         
         Y_pred = model.predict(X_test)
+        Y_pred = np.clip(np.asarray(Y_pred, dtype=np.float32), 0.0, 1.0)
         
         rmse = np.sqrt(mean_squared_error(Y_true, Y_pred))
         mae = mean_absolute_error(Y_true, Y_pred)

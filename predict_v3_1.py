@@ -139,7 +139,7 @@ def main():
 
         print(f"   ⚙️ Farm {farm_id} 输入维度: {x_test.shape[1]}")
         y_pred = model.predict(x_test)
-        y_pred = np.asarray(y_pred, dtype=np.float32)
+        y_pred = np.clip(np.asarray(y_pred, dtype=np.float32), 0.0, 1.0)
 
         all_predictions.append(y_pred)
         print(f"   ✅ Farm {farm_id} 完成: 预测输出形状 = {y_pred.shape}")
