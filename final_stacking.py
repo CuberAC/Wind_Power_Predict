@@ -10,13 +10,13 @@ def main():
     
     # 1. 加载数据
     try:
-        xgb_oof = np.load('stacking_data/XGB_OOF_Pred.npy')
-        gnn_oof = np.load('stacking_data/GNN_OOF_Pred.npy')
-        y_oof   = np.load('stacking_data/Y_OOF_True.npy')
+        xgb_oof = np.load('data/stacking_data/XGB_OOF_Pred.npy')
+        gnn_oof = np.load('data/stacking_data/GNN_OOF_Pred.npy')
+        y_oof   = np.load('data/stacking_data/Y_OOF_True.npy')
 
-        xgb_test = np.load('stacking_data/XGB_Test_Pred.npy')
-        gnn_test = np.load('stacking_data/GNN_Test_Pred.npy')
-        y_test   = np.load('stacking_data/Y_Test_True.npy')
+        xgb_test = np.load('data/stacking_data/XGB_Test_Pred.npy')
+        gnn_test = np.load('data/stacking_data/GNN_Test_Pred.npy')
+        y_test   = np.load('data/stacking_data/Y_Test_True.npy')
     except FileNotFoundError as e:
         print(f"❌ 找不到文件: {e} (请检查 stacking_data 目录下的文件名是否拼写正确)")
         return

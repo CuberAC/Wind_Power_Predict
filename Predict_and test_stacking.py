@@ -128,7 +128,7 @@ def flatten_add_farm(X_3d):
 # 3. 终极预测流水线 (Main)
 # =====================================================================
 def main():
-    test_file = 'data/wind_test_cleaned.npy'
+    test_file = 'data/wind_val_20.npy'
     if not os.path.exists(test_file):
         print(f"❌ 找不到测试集文件 {test_file}")
         return
